@@ -1,0 +1,473 @@
+﻿<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>TaskFlow</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="app-header">
+<h1 class="app-title">TaskFlow</h1>
+<div class="header-actions">
+<button id="themeToggleBtn" class="btn small ghost" aria-label="Cambiar tema">Modo oscuro</button>
+<button id="openNotesBtn" class="btn small ghost">Notas</button>
+<button id="openChecklistsBtn" class="btn small ghost">Listas</button>
+<button id="openProjectsBtn" class="btn small ghost">Proyectos</button>
+<button id="openCalendarBtn" class="btn small ghost">Calendario</button>
+<button id="openSettingsBtn" class="btn small ghost">Ajustes</button>
+<button id="profileBtn" class="btn small ghost">Perfil</button>
+</div>
+</header>
+
+<main class="container">
+<!-- Sección de registro -->
+<section id="register-section" class="card center">
+<h2>Crear cuenta</h2>
+<p class="muted">¡Bienvenido! Crea una cuenta para empezar a organizar tus tareas.</p>
+<div class="form-row">
+<label for="nameInput">Nombre</label>
+<input id="nameInput" type="text" placeholder="Tu nombre" />
+</div>
+<div class="form-row">
+<label for="gradeInput">Grado</label>
+<input id="gradeInput" type="text" placeholder="Ej. 5to grado" />
+</div>
+<div class="actions">
+<button id="createAccountBtn" class="btn primary">Crear cuenta</button>
+</div>
+</section>
+
+<!-- Sección de inicio -->
+<section id="home-section" class="hidden">
+<div class="card">
+<div class="home-header">
+<div>
+<h2 id="greeting">Hola, estudiante 👋</h2>
+<p class="muted">Bienvenido de nuevo</p>
+</div>
+<div>
+<button id="addTaskBtn" class="btn primary">Agregar tarea</button>
+</div>
+</div>
+<div class="dashboard-card" aria-label="Resumen del usuario">
+<div class="dashboard-main">
+<div class="dashboard-avatar" id="dashboardAvatar">U</div>
+<div>
+<div class="dashboard-eyebrow">Mi tablero <span class="decor-slot" data-decoration-slot="dashboard"></span></div>
+<h3 id="dashboardUsername">Usuario</h3>
+<p class="muted">Recompensas cosméticas y progreso general.</p>
+</div>
+</div>
+<div class="dashboard-summary">
+<div class="dashboard-next-task">
+<span class="summary-kicker">Próxima tarea</span>
+<h3 id="dashboardNextTaskTitle">No hay tareas próximas</h3>
+<p id="dashboardNextTaskMeta" class="muted">Agrega una tarea para verla aquí.</p>
+</div>
+<div class="dashboard-metrics">
+<div class="dashboard-metric">
+<span>XP total</span>
+<strong id="dashboardXpValue">0 XP</strong>
+<div class="xp-bar"><span id="dashboardXpBar"></span></div>
+</div>
+<div class="dashboard-metric">
+<span>Racha 🔥</span>
+<strong id="dashboardStreakValue">0 🔥</strong>
+<small class="muted">Consistencia diaria</small>
+</div>
+</div>
+</div>
+<div class="dashboard-stats">
+<div><span>⭐ Points</span><strong id="dashboardPoints">0</strong></div>
+<div><span>📌 Pending</span><strong id="dashboardPending">0</strong></div>
+<div><span>✅ Completed</span><strong id="dashboardCompleted">0</strong></div>
+<div><span>⏰ Overdue</span><strong id="dashboardOverdue">0</strong></div>
+<div><span>💳 Spent</span><strong id="dashboardSpent">0</strong></div>
+</div>
+<div class="dashboard-actions">
+<button id="openShopBtn" class="btn primary">Open Shop</button>
+</div>
+</div>
+<div class="task-search-row">
+<div class="form-row task-search">
+<label for="taskSearchInput">Buscar tareas</label>
+<input id="taskSearchInput" type="search" placeholder="Busca por título o materia" />
+</div>
+</div>
+<div class="filters" aria-label="Filtros de tareas">
+<label for="filterSubject">Materia:</label>
+<select id="filterSubject">
+<option value="All">Todas</option>
+</select>
+<label for="filterCategory">Categoría:</label>
+<select id="filterCategory">
+<option value="All">Todas</option>
+</select>
+<label for="filterImportance">Importancia:</label>
+<select id="filterImportance">
+<option value="All">Todas</option>
+<option value="Low">Baja</option>
+<option value="Medium">Media</option>
+<option value="High">Alta</option>
+</select>
+<label for="filterStatus">Estado:</label>
+<select id="filterStatus">
+<option value="All">Todos</option>
+<option value="Pending">Pendientes</option>
+<option value="Completed">Completadas</option>
+<option value="Overdue">Atrasadas</option>
+</select>
+<button id="clearFiltersBtn" class="btn ghost">Borrar</button>
+</div>
+<div class="sorts" aria-label="Orden de tareas">
+<label for="sortTasksBy">Ordenar por:</label>
+<select id="sortTasksBy">
+<option value="soonest">Fecha y hora más cercanas</option>
+<option value="latest">Fecha y hora más lejanas</option>
+</select>
+</div>
+<div class="legend" aria-hidden="false">
+<div class="legend-item"><span class="dot low"></span>Baja</div>
+<div class="legend-item"><span class="dot med"></span>Media</div>
+<div class="legend-item"><span class="dot high"></span>Alta</div>
+<div class="legend-item shortcut">Atajos: <strong>N</strong> Nueva, <strong>P</strong> Perfil, <strong>Esc</strong> Inicio</div>
+</div>
+<div class="notifications-card">
+<div class="notifications-header">
+<h3>Notificaciones</h3>
+<p class="muted">Te muestra cuánto tiempo queda para cada tarea.</p>
+</div>
+<div id="notificationsContainer" class="notifications"></div>
+</div>
+<div id="tasksContainer" class="tasks-grid">
+<!-- Aquí se muestran las tareas -->
+</div>
+</div>
+</section>
+
+<!-- Sección de notas -->
+<section id="notes-section" class="card hidden">
+<div class="section-header">
+<div>
+<h2>Notas</h2>
+<p class="muted">Guarda ideas, referencias y recordatorios rápidos.</p>
+</div>
+<button id="closeNotesBtn" class="btn ghost">Volver</button>
+</div>
+<div class="section-toolbar">
+<div class="form-row module-search">
+<label for="notesSearchInput">Buscar notas</label>
+<input id="notesSearchInput" type="search" placeholder="Título, contenido o etiquetas" />
+</div>
+</div>
+<div class="module-form-grid">
+<div class="form-row">
+<label for="noteTitleInput">Título</label>
+<input id="noteTitleInput" type="text" placeholder="Idea, referencia, recuerdo..." />
+</div>
+<div class="form-row">
+<label for="noteTagsInput">Etiquetas</label>
+<input id="noteTagsInput" type="text" placeholder="Separadas por comas" />
+</div>
+</div>
+<div class="form-row">
+<label for="noteContentInput">Contenido</label>
+<textarea id="noteContentInput" rows="4" placeholder="Escribe la nota aquí"></textarea>
+</div>
+<div class="actions">
+<button id="noteSaveBtn" class="btn primary">Guardar nota</button>
+<button id="noteCancelBtn" class="btn ghost">Limpiar</button>
+</div>
+<div id="notesContainer" class="module-list"></div>
+</section>
+
+<!-- Sección de checklists -->
+<section id="checklists-section" class="card hidden">
+<div class="section-header">
+<div>
+<h2>Checklists</h2>
+<p class="muted">Listas ligeras para compras, ideas y pasos rápidos.</p>
+</div>
+<button id="closeChecklistsBtn" class="btn ghost">Volver</button>
+</div>
+<div class="section-toolbar">
+<div class="form-row module-search">
+<label for="checklistsSearchInput">Buscar checklists</label>
+<input id="checklistsSearchInput" type="search" placeholder="Título o elemento" />
+</div>
+</div>
+<div class="module-form-grid">
+<div class="form-row">
+<label for="checklistTitleInput">Título</label>
+<input id="checklistTitleInput" type="text" placeholder="Lista de compras, ideas, pasos..." />
+</div>
+<div class="form-row">
+<label for="checklistItemInput">Primer elemento</label>
+<input id="checklistItemInput" type="text" placeholder="Elemento inicial opcional" />
+</div>
+</div>
+<div class="actions">
+<button id="checklistSaveBtn" class="btn primary">Crear checklist</button>
+<button id="checklistCancelBtn" class="btn ghost">Limpiar</button>
+</div>
+<div id="checklistsContainer" class="module-list"></div>
+</section>
+
+<!-- Sección de proyectos -->
+<section id="projects-section" class="card hidden">
+<div class="section-header">
+<div>
+<h2>Proyectos</h2>
+<p class="muted">Agrupa tareas relacionadas y sigue su progreso automáticamente.</p>
+</div>
+<button id="closeProjectsBtn" class="btn ghost">Volver</button>
+</div>
+<div class="section-toolbar">
+<div class="form-row module-search">
+<label for="projectsSearchInput">Buscar proyectos</label>
+<input id="projectsSearchInput" type="search" placeholder="Nombre, sección o descripción" />
+</div>
+</div>
+<div class="module-form-grid">
+<div class="form-row">
+<label for="projectNameInput">Nombre</label>
+<input id="projectNameInput" type="text" placeholder="Ej. Sonico Adventure" />
+</div>
+<div class="form-row">
+<label for="projectSectionInput">Sección</label>
+<input id="projectSectionInput" type="text" placeholder="Ej. Programming" />
+</div>
+</div>
+<div class="form-row">
+<label for="projectDescriptionInput">Descripción</label>
+<textarea id="projectDescriptionInput" rows="3" placeholder="Describe el objetivo del proyecto"></textarea>
+</div>
+<div class="actions">
+<button id="projectSaveBtn" class="btn primary">Guardar proyecto</button>
+<button id="projectCancelBtn" class="btn ghost">Limpiar</button>
+</div>
+<div id="projectsContainer" class="module-list"></div>
+</section>
+
+<!-- Sección de crear tarea -->
+<section id="create-task-section" class="card hidden">
+<h2 id="createTaskHeading">Agregar tarea</h2>
+<div class="form-row">
+<label for="taskTitle">Nombre de la tarea</label>
+<input id="taskTitle" type="text" placeholder="Ej. Tarea de matemáticas" />
+</div>
+<div class="form-row">
+<label for="taskSubject">Materia</label>
+<input id="taskSubject" type="text" placeholder="Ej. Matemáticas" />
+</div>
+<div class="form-row">
+<label for="taskCategory">Categoría</label>
+<select id="taskCategory">
+<option value="Study">Study</option>
+<option value="Work">Work</option>
+<option value="Personal">Personal</option>
+<option value="Game Development">Game Development</option>
+<option value="Health">Health</option>
+<option value="Learning">Learning</option>
+<option value="Creative">Creative</option>
+<option value="Other">Other</option>
+</select>
+</div>
+<div class="form-row">
+<label for="taskProject">Proyecto</label>
+<select id="taskProject"></select>
+</div>
+<div class="form-row">
+<label for="taskDateTime">Fecha y hora de entrega</label>
+<input id="taskDateTime" type="datetime-local" />
+</div>
+<div class="form-row helper-row">
+<label>Importancia automática</label>
+<div class="auto-importance">Se ajusta según qué tan cerca esté la fecha y hora de entrega. <strong id="autoImportancePreview">Media</strong></div>
+</div>
+<div class="actions">
+<button id="saveTaskBtn" class="btn primary">Guardar tarea</button>
+<button id="cancelTaskBtn" class="btn ghost">Cancelar</button>
+</div>
+</section>
+
+<!-- Sección de perfil -->
+<section id="profile-section" class="card hidden">
+<h2>Perfil</h2>
+<div class="profile-header-card">
+<div class="profile-avatar" id="profileAvatar">U</div>
+<div class="profile-copy">
+<p class="muted">Nivel <strong id="profileLevelCount">1</strong></p>
+<h3 id="profileName"></h3>
+<p id="profileGrade" class="muted"></p>
+<div class="profile-xp-bar"><span id="profileXpBar"></span></div>
+<div class="profile-xp-meta"><span id="profileXpCount">0</span> XP total</div>
+</div>
+</div>
+<div class="profile-stats">
+<div><strong>Creadas:</strong> <span id="createdCount">0</span></div>
+<div><strong>Completadas:</strong> <span id="completedCount">0</span></div>
+<div><strong>Atrasadas:</strong> <span id="overdueCount">0</span></div>
+<div><strong>Pendientes:</strong> <span id="leftCount">0</span></div>
+<div><strong>Puntos:</strong> <span id="pointsCount">0</span></div>
+<div><strong>Racha:</strong> <span id="profileStreakCount">0</span></div>
+<div><strong>Máx. racha:</strong> <span id="profileMaxStreakCount">0</span></div>
+</div>
+<div class="actions">
+<button id="editProfileBtn" class="btn">Editar perfil</button>
+<button id="deleteAccountBtn" class="btn danger">Eliminar cuenta</button>
+<button id="closeProfileBtn" class="btn ghost">Cerrar</button>
+</div>
+<div id="editProfileForm" class="hidden">
+<div class="form-row">
+<label for="editName">Nombre</label>
+<input id="editName" type="text" />
+</div>
+<div class="form-row">
+<label for="editGrade">Grado</label>
+<input id="editGrade" type="text" />
+</div>
+<div class="actions">
+<button id="saveProfileBtn" class="btn primary">Guardar</button>
+<button id="cancelEditProfileBtn" class="btn ghost">Cancelar</button>
+</div>
+</div>
+</section>
+
+<!-- Sección de calendario -->
+<section id="calendar-section" class="card hidden">
+<div class="calendar-header">
+<div>
+<h2>Calendario</h2>
+<p class="muted" id="calendarSummary">0 tareas en este mes</p>
+</div>
+<div class="calendar-nav">
+<button id="calendarPrevBtn" class="btn ghost" type="button">←</button>
+<strong id="calendarMonthLabel">Mes</strong>
+<button id="calendarNextBtn" class="btn ghost" type="button">→</button>
+<button id="closeCalendarBtn" class="btn ghost" type="button">Volver</button>
+</div>
+</div>
+<div class="calendar-grid" id="calendarGrid"></div>
+<div class="calendar-panel" id="calendarTaskPanel">
+<p class="muted">Selecciona un día para ver sus tareas.</p>
+</div>
+</section>
+
+<!-- Sección de ajustes -->
+<section id="settings-section" class="card hidden">
+<div class="settings-header">
+<div>
+<h2>Ajustes</h2>
+<p class="muted">Personaliza la interfaz y gestiona tus datos.</p>
+</div>
+<button id="closeSettingsBtn" class="btn ghost" type="button">Volver</button>
+</div>
+<div class="settings-grid">
+<div class="settings-card">
+<h3>Visual</h3>
+<div class="form-row">
+<label for="settingsThemeMode">Tema</label>
+<select id="settingsThemeMode">
+<option value="light">Claro</option>
+<option value="dark">Oscuro</option>
+</select>
+</div>
+<div class="settings-split">
+<div class="form-row">
+<label for="settingsPrimaryColor">Color primario</label>
+<input id="settingsPrimaryColor" type="color" value="#5b8def" />
+</div>
+<div class="form-row">
+<label for="settingsSecondaryColor">Color secundario</label>
+<input id="settingsSecondaryColor" type="color" value="#7ee0a8" />
+</div>
+</div>
+<div class="form-row">
+<label for="settingsFontFamily">Fuente</label>
+<select id="settingsFontFamily">
+<option value="Inter">Inter</option>
+<option value="Georgia">Georgia</option>
+<option value="Verdana">Verdana</option>
+<option value="Courier New">Courier New</option>
+</select>
+</div>
+<div class="form-row">
+<label for="settingsBackgroundMode">Fondo</label>
+<select id="settingsBackgroundMode">
+<option value="gradient">Gradiente</option>
+<option value="solid">Sólido</option>
+<option value="image">Imagen</option>
+</select>
+</div>
+<div class="form-row">
+<label class="settings-check"><input id="settingsOverlayToggle" type="checkbox" checked /> Overlay oscuro para fondos</label>
+</div>
+<div class="form-row">
+<label for="settingsBackgroundInput">Imagen de fondo</label>
+<input id="settingsBackgroundInput" type="file" accept="image/*" />
+<small id="settingsBackgroundStatus" class="muted">Sin imagen personalizada</small>
+</div>
+</div>
+<div class="settings-card">
+<h3>Datos</h3>
+<div class="form-row">
+<label for="settingsBonusPoints">Puntos manuales de prueba</label>
+<input id="settingsBonusPoints" type="number" min="0" step="1" placeholder="0" />
+<small id="settingsBonusStatus" class="muted">Puntos manuales actuales: 0</small>
+</div>
+<div class="actions settings-actions">
+<button id="settingsApplyBonusBtn" class="btn primary" type="button">Aplicar puntos</button>
+<button id="settingsClearBonusBtn" class="btn ghost" type="button">Limpiar puntos</button>
+</div>
+<div class="actions settings-actions">
+<button id="settingsExportBtn" class="btn primary" type="button">Exportar respaldo</button>
+<button id="settingsImportBtn" class="btn ghost" type="button">Importar respaldo</button>
+<button id="settingsResetBtn" class="btn danger" type="button">Restablecer sistema</button>
+</div>
+<input id="settingsImportInput" type="file" accept="application/json" class="hidden" />
+</div>
+</div>
+</section>
+
+<!-- Sección de shop -->
+<section id="shop-section" class="card hidden">
+<div class="shop-header">
+<div>
+<div class="dashboard-eyebrow">Shop <span class="decor-slot" data-decoration-slot="shop"></span></div>
+<h2>Cosmetic Rewards</h2>
+<p class="muted">Spend points only on visual customization. No task advantages.</p>
+</div>
+<div class="shop-header-actions">
+<div class="shop-balance">Points balance: <strong id="shopBalance">0</strong></div>
+<button id="closeShopBtn" class="btn ghost">Back</button>
+</div>
+</div>
+<div class="shop-equipped card-inner">
+<div>Theme: <strong id="equippedThemeLabel">Classic Dark</strong></div>
+<div>Card style: <strong id="equippedStyleLabel">Classic</strong></div>
+<div>Decoration: <strong id="equippedDecorationLabel">Stars</strong></div>
+</div>
+<section class="shop-category">
+<h3>Background Themes</h3>
+<div id="shopThemesList" class="shop-grid"></div>
+</section>
+<section class="shop-category">
+<h3>Card Styles</h3>
+<div id="shopStylesList" class="shop-grid"></div>
+</section>
+<section class="shop-category">
+<h3>Decorations</h3>
+<div id="shopDecorationsList" class="shop-grid"></div>
+</section>
+</section>
+</main>
+
+<footer class="app-footer">
+<small class="muted">TaskFlow — planificador sencillo para estudiantes</small>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
