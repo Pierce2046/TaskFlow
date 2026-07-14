@@ -10,6 +10,10 @@
 <header class="app-header">
 <h1 class="app-title">TaskFlow</h1>
 <div class="header-actions">
+<label class="user-switcher" for="userSwitcher">
+<span>Usuario</span>
+<select id="userSwitcher"></select>
+</label>
 <button id="themeToggleBtn" class="btn small ghost" aria-label="Cambiar tema">Modo oscuro</button>
 <button id="openNotesBtn" class="btn small ghost">Notas</button>
 <button id="openChecklistsBtn" class="btn small ghost">Listas</button>
@@ -35,6 +39,10 @@
 </div>
 <div class="actions">
 <button id="createAccountBtn" class="btn primary">Crear cuenta</button>
+</div>
+<div class="user-list-block">
+<h3>Usuarios existentes</h3>
+<div id="registerUsersList" class="user-list"></div>
 </div>
 </section>
 
@@ -87,8 +95,68 @@
 </div>
 <div class="dashboard-actions">
 <button id="openShopBtn" class="btn primary">Open Shop</button>
+<button id="enterFocusBtn" class="btn primary">🎯 Modo Enfoque</button>
 </div>
 </div>
+<section class="recommendation-card" aria-label="Qué hago ahora">
+<div>
+<span class="summary-kicker">Qué hago ahora</span>
+<h3 id="recommendationTitle">Sin tareas pendientes</h3>
+<p id="recommendationMeta" class="muted">Cuando tengas tareas pendientes, te recomendaré la más urgente.</p>
+</div>
+<strong id="recommendationPriority" class="priority-pill low">Listo</strong>
+</section>
+
+<!-- Sección Premium: Estadísticas Avanzadas -->
+<section id="advancedStatsSection" class="card hidden">
+<div class="section-header">
+<div>
+<h3>📊 Estadísticas Avanzadas</h3>
+<p class="muted">Análisis detallado de tu productividad</p>
+</div>
+<button id="premiumExportBtn" class="btn primary small hidden">Exportar datos</button>
+</div>
+<div id="advancedStatsContent"></div>
+</section>
+
+<!-- Sección Premium: Recomendaciones Inteligentes -->
+<section id="smartRecommendationsSection" class="card hidden">
+<div class="section-header">
+<div>
+<h3>💡 Recomendaciones Inteligentes</h3>
+<p class="muted">Consejos personalizados basados en tus tareas</p>
+</div>
+</div>
+<div id="smartRecommendationsContent"></div>
+</section>
+
+<!-- Sección Modo Enfoque -->
+<section id="focusModeSection" class="card hidden">
+<div class="focus-mode-container">
+<div class="focus-header">
+<h2 id="focusTaskTitle">Selecciona una tarea para enfocarte</h2>
+<button id="exitFocusBtn" class="btn ghost">Salir del modo enfoque</button>
+</div>
+<div class="focus-timer">
+<div class="timer-display" id="timerDisplay">25:00</div>
+<div class="timer-controls">
+<button id="startTimerBtn" class="btn primary">Iniciar</button>
+<button id="pauseTimerBtn" class="btn ghost hidden">Pausar</button>
+<button id="resetTimerBtn" class="btn ghost">Reiniciar</button>
+</div>
+<div class="timer-status" id="timerStatus">Listo para comenzar</div>
+</div>
+<div class="focus-task-details">
+<p id="focusTaskSubject" class="muted"></p>
+<p id="focusTaskMeta" class="muted"></p>
+</div>
+<div class="focus-actions">
+<button id="completeFocusTaskBtn" class="btn primary">Completar tarea</button>
+<button id="skipFocusTaskBtn" class="btn ghost">Omitir tarea</button>
+</div>
+</div>
+</section>
+
 <div class="task-search-row">
 <div class="form-row task-search">
 <label for="taskSearchInput">Buscar tareas</label>
@@ -286,6 +354,11 @@
 <label>Importancia automática</label>
 <div class="auto-importance">Se ajusta según qué tan cerca esté la fecha y hora de entrega. <strong id="autoImportancePreview">Media</strong></div>
 </div>
+<div class="form-row">
+<label for="taskSubtasksInput">Subtareas</label>
+<textarea id="taskSubtasksInput" rows="4" placeholder="Una subtarea por línea"></textarea>
+<small class="muted">Puedes editarlas después desde la tarjeta de la tarea.</small>
+</div>
 <div class="actions">
 <button id="saveTaskBtn" class="btn primary">Guardar tarea</button>
 <button id="cancelTaskBtn" class="btn ghost">Cancelar</button>
@@ -409,6 +482,9 @@
 <input id="settingsBackgroundInput" type="file" accept="image/*" />
 <small id="settingsBackgroundStatus" class="muted">Sin imagen personalizada</small>
 </div>
+<div class="form-row">
+<label class="settings-check"><input id="settingsAutoCompleteSubtasks" type="checkbox" checked /> Completar tarea cuando todas sus subtareas estén listas</label>
+</div>
 </div>
 <div class="settings-card">
 <h3>Datos</h3>
@@ -427,6 +503,71 @@
 <button id="settingsResetBtn" class="btn danger" type="button">Restablecer sistema</button>
 </div>
 <input id="settingsImportInput" type="file" accept="application/json" class="hidden" />
+</div>
+<div class="settings-card">
+<h3>Cuentas</h3>
+<div class="form-row">
+<label>Usuario actual</label>
+<div class="current-user-display">
+<strong id="settingsCurrentUserName">-</strong>
+<small class="muted" id="settingsCurrentUserGrade">-</small>
+</div>
+</div>
+<div class="form-row">
+<label>Cambiar de usuario</label>
+<select id="settingsUserSwitcher">
+<option value="">Seleccionar usuario...</option>
+</select>
+</div>
+<div class="actions settings-actions">
+<button id="settingsCreateUserBtn" class="btn primary" type="button">Crear nueva cuenta</button>
+<button id="settingsLogoutBtn" class="btn danger" type="button">Cerrar sesión</button>
+</div>
+<div id="settingsUserForm" class="hidden">
+<div class="form-row">
+<label for="settingsNewUserName">Nombre</label>
+<input id="settingsNewUserName" type="text" placeholder="Tu nombre" />
+</div>
+<div class="form-row">
+<label for="settingsNewUserGrade">Grado</label>
+<input id="settingsNewUserGrade" type="text" placeholder="Ej. 5to grado" />
+</div>
+<div class="actions">
+<button id="settingsSaveUserBtn" class="btn primary" type="button">Crear cuenta</button>
+<button id="settingsCancelUserBtn" class="btn ghost" type="button">Cancelar</button>
+</div>
+</div>
+</div>
+<div class="settings-card premium-card">
+<h3>Plan Freemium</h3>
+<div class="form-row">
+<label class="settings-check">
+<input id="premiumToggle" type="checkbox" />
+Activar modo Premium (demo)
+</label>
+</div>
+<div class="plan-grid">
+<div>
+<h4>Plan Gratuito</h4>
+<ul class="plan-list">
+<li>Crear tareas</li>
+<li>Subtareas</li>
+<li>Prioridades automáticas</li>
+<li>XP y niveles</li>
+<li>Modo Enfoque</li>
+</ul>
+</div>
+<div>
+<h4>Plan Premium</h4>
+<ul class="plan-list locked">
+<li>Estadísticas avanzadas</li>
+<li>Recomendaciones inteligentes</li>
+<li>Personalización</li>
+<li>Temas exclusivos</li>
+<li>Exportar datos</li>
+</ul>
+</div>
+</div>
 </div>
 </div>
 </section>

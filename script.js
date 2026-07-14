@@ -9,6 +9,7 @@ const SETTINGS_KEY = 'studyflow_settings';
 const NOTES_KEY = 'studyflow_notes';
 const CHECKLISTS_KEY = 'studyflow_checklists';
 const PROJECTS_KEY = 'studyflow_projects';
+const APP_STATE_KEY = 'studyflow_app_state';
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const TASK_CATEGORIES = ['Study', 'Work', 'Personal', 'Game Development', 'Health', 'Learning', 'Creative', 'Other'];
@@ -80,36 +81,15 @@ const DEFAULT_SETTINGS = {
   fontFamily: 'Inter',
   backgroundMode: 'gradient',
   backgroundImage: '',
-  darkOverlay: true
+  darkOverlay: true,
+  autoCompleteTaskWithSubtasks: true,
+  isPremium: false
 };
 
 const DEFAULT_TASK_CATEGORY = 'Study';
 
 // --- Utility helpers ---
 function qs(id){ return document.getElementById(id); }
-function saveUser(user){ localStorage.setItem(USER_KEY, JSON.stringify(user)); }
-function loadUser(){
-  const raw = localStorage.getItem(USER_KEY);
-  return raw ? JSON.parse(raw) : null;
-}
-function loadTasks(){
-  const raw = localStorage.getItem(TASKS_KEY);
-  const tasks = raw ? JSON.parse(raw) : [];
-  const normalized = tasks.map(normalizeTask);
-  if(raw && JSON.stringify(tasks) !== JSON.stringify(normalized)){
-    saveTasks(normalized);
-  }
-  return normalized;
-}
-function saveTasks(tasks){ localStorage.setItem(TASKS_KEY, JSON.stringify(tasks)); }
-function loadJsonList(key){
-  const raw = localStorage.getItem(key);
-  return raw ? JSON.parse(raw) : [];
-}
-function saveJsonList(key, value){
-  localStorage.setItem(key, JSON.stringify(value));
-}
-function saveShopState(state){ localStorage.setItem(SHOP_KEY, JSON.stringify(state)); }
 function cloneDefaultShopState(){ return JSON.parse(JSON.stringify(DEFAULT_SHOP_STATE)); }
 function generateEntityId(prefix){
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -117,12 +97,199 @@ function generateEntityId(prefix){
 function generateTaskId(){
   return generateEntityId('task');
 }
+function createEmptyUserData(profile = {}){
+  const id = profile.id || generateEntityId('user');
+  return {
+    id,
+    name: String(profile.name || '').trim(),
+    grade: String(profile.grade || '').trim(),
+    tasks: [],
+    notes: [],
+    checklists: [],
+    projects: [],
+    progress: { ...DEFAULT_PROGRESS },
+    settings: { ...DEFAULT_SETTINGS },
+    shop: cloneDefaultShopState()
+  };
+}
+function createEmptyAppState(){
+  return { activeUserId: '', users: {} };
+}
+function safeParseJson(raw, fallback){
+  if(!raw) return fallback;
+  try{
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+function normalizeUserData(user){
+  const normalized = createEmptyUserData(user);
+  normalized.tasks = Array.isArray(user.tasks) ? user.tasks.map(normalizeTask) : [];
+  normalized.notes = Array.isArray(user.notes) ? user.notes.map(normalizeNote) : [];
+  normalized.checklists = Array.isArray(user.checklists) ? user.checklists.map(normalizeChecklist) : [];
+  normalized.projects = Array.isArray(user.projects) ? user.projects.map(normalizeProject) : [];
+  normalized.progress = { ...DEFAULT_PROGRESS, ...(user.progress || {}) };
+  normalized.settings = { ...DEFAULT_SETTINGS, ...(user.settings || {}) };
+  normalized.shop = normalizeShopState(user.shop);
+  return normalized;
+}
+function normalizeAppState(state){
+  const normalized = createEmptyAppState();
+  Object.values(state.users || {}).forEach(user => {
+    const normalizedUser = normalizeUserData(user);
+    if(normalizedUser.id && normalizedUser.name){
+      normalized.users[normalizedUser.id] = normalizedUser;
+    }
+  });
+  normalized.activeUserId = normalized.users[state.activeUserId] ? state.activeUserId : Object.keys(normalized.users)[0] || '';
+  return normalized;
+}
+function loadLegacyList(key){
+  return safeParseJson(localStorage.getItem(key), []);
+}
+function buildStateFromLegacyStorage(){
+  const legacyUser = safeParseJson(localStorage.getItem(USER_KEY), null);
+  const state = createEmptyAppState();
+  if(!legacyUser) return state;
+  const user = createEmptyUserData({ ...legacyUser, id: generateEntityId('user') });
+  user.tasks = loadLegacyList(TASKS_KEY).map(normalizeTask);
+  user.notes = loadLegacyList(NOTES_KEY).map(normalizeNote);
+  user.checklists = loadLegacyList(CHECKLISTS_KEY).map(normalizeChecklist);
+  user.projects = loadLegacyList(PROJECTS_KEY).map(normalizeProject);
+  user.progress = { ...DEFAULT_PROGRESS, ...safeParseJson(localStorage.getItem(PROGRESS_KEY), {}) };
+  user.settings = { ...DEFAULT_SETTINGS, ...safeParseJson(localStorage.getItem(SETTINGS_KEY), {}) };
+  user.shop = normalizeShopState(safeParseJson(localStorage.getItem(SHOP_KEY), null));
+  state.users[user.id] = user;
+  state.activeUserId = user.id;
+  return state;
+}
+function loadAppState(){
+  const stored = localStorage.getItem(APP_STATE_KEY);
+  const state = stored ? normalizeAppState(safeParseJson(stored, createEmptyAppState())) : buildStateFromLegacyStorage();
+  saveAppState(state);
+  return state;
+}
+function saveAppState(state){
+  localStorage.setItem(APP_STATE_KEY, JSON.stringify(normalizeAppState(state)));
+}
+function getUsers(){
+  return Object.values(loadAppState().users).sort((a, b) => a.name.localeCompare(b.name));
+}
+function getActiveUserData(){
+  const state = loadAppState();
+  return state.activeUserId ? state.users[state.activeUserId] || null : null;
+}
+function updateActiveUserData(mutator){
+  const state = loadAppState();
+  const activeId = state.activeUserId;
+  if(!activeId || !state.users[activeId]) return null;
+  const nextUser = normalizeUserData(state.users[activeId]);
+  mutator(nextUser);
+  state.users[activeId] = normalizeUserData(nextUser);
+  saveAppState(state);
+  return state.users[activeId];
+}
+function saveUser(user){
+  if(user.id){
+    const state = loadAppState();
+    const existing = state.users[user.id] || createEmptyUserData(user);
+    state.users[user.id] = normalizeUserData({ ...existing, ...user });
+    state.activeUserId = user.id;
+    saveAppState(state);
+    return;
+  }
+  updateActiveUserData(active => {
+    active.name = String(user.name || active.name).trim();
+    active.grade = String(user.grade || active.grade).trim();
+  });
+}
+function loadUser(){
+  const user = getActiveUserData();
+  return user ? { id: user.id, name: user.name, grade: user.grade } : null;
+}
+function createUserProfile(name, grade){
+  const state = loadAppState();
+  const user = createEmptyUserData({ name, grade });
+  state.users[user.id] = user;
+  state.activeUserId = user.id;
+  saveAppState(state);
+  return user;
+}
+function switchUser(userId){
+  const state = loadAppState();
+  if(!state.users[userId]) return;
+  state.activeUserId = userId;
+  saveAppState(state);
+  editingTaskId = null;
+  applyUserVisualSettings();
+  applyShopCosmetics();
+  renderUserSwitcher();
+  showHome();
+}
+function deleteActiveUser(){
+  const state = loadAppState();
+  if(!state.activeUserId) return;
+  delete state.users[state.activeUserId];
+  state.activeUserId = Object.keys(state.users)[0] || '';
+  saveAppState(state);
+}
+function loadTasks(){
+  const user = getActiveUserData();
+  const tasks = user ? user.tasks : [];
+  const normalized = tasks.map(normalizeTask);
+  if(user && JSON.stringify(tasks) !== JSON.stringify(normalized)) saveTasks(normalized);
+  return normalized;
+}
+function saveTasks(tasks){
+  updateActiveUserData(user => { user.tasks = tasks.map(normalizeTask); });
+}
+function mapStorageKeyToUserProp(key){
+  return {
+    [NOTES_KEY]: 'notes',
+    [CHECKLISTS_KEY]: 'checklists',
+    [PROJECTS_KEY]: 'projects'
+  }[key];
+}
+function loadJsonList(key){
+  const user = getActiveUserData();
+  const prop = mapStorageKeyToUserProp(key);
+  return user && prop ? user[prop] || [] : [];
+}
+function saveJsonList(key, value){
+  const prop = mapStorageKeyToUserProp(key);
+  if(!prop) return;
+  updateActiveUserData(user => { user[prop] = Array.isArray(value) ? value : []; });
+}
+function normalizeShopState(rawState){
+  const parsed = rawState || {};
+  const state = cloneDefaultShopState();
+  state.purchased.themes = Array.from(new Set([...(parsed.purchased?.themes || []), ...state.purchased.themes]));
+  state.purchased.styles = Array.from(new Set([...(parsed.purchased?.styles || []), ...state.purchased.styles]));
+  state.purchased.decorations = Array.from(new Set([...(parsed.purchased?.decorations || []), ...state.purchased.decorations]));
+  state.equipped.theme = parsed.equipped?.theme || state.equipped.theme;
+  state.equipped.cardStyle = parsed.equipped?.cardStyle || state.equipped.cardStyle;
+  state.equipped.decoration = parsed.equipped?.decoration || state.equipped.decoration;
+  return state;
+}
+function saveShopState(state){
+  updateActiveUserData(user => { user.shop = normalizeShopState(state); });
+}
 function normalizeTask(task){
   const normalized = { ...task };
   if(!normalized.id) normalized.id = generateTaskId();
   if(typeof normalized.completed !== 'boolean') normalized.completed = !!normalized.completed;
   if(!normalized.category || !TASK_CATEGORIES.includes(normalized.category)) normalized.category = DEFAULT_TASK_CATEGORY;
   if(normalized.projectId === undefined) normalized.projectId = '';
+  normalized.subtasks = Array.isArray(normalized.subtasks) ? normalized.subtasks.map(normalizeSubtask).filter(item => item.title) : [];
+  normalized.xpAwarded = !!normalized.xpAwarded;
+  return normalized;
+}
+function normalizeSubtask(subtask){
+  const normalized = { ...subtask };
+  if(!normalized.id) normalized.id = generateEntityId('subtask');
+  normalized.title = String(normalized.title || normalized.text || '').trim();
+  normalized.completed = !!normalized.completed;
   return normalized;
 }
 function loadNotes(){
@@ -180,52 +347,24 @@ function normalizeProject(project){
   return normalized;
 }
 function loadProgress(){
-  const raw = localStorage.getItem(PROGRESS_KEY);
-  if(!raw) return { ...DEFAULT_PROGRESS };
-  try{
-    return { ...DEFAULT_PROGRESS, ...JSON.parse(raw) };
-  } catch {
-    return { ...DEFAULT_PROGRESS };
-  }
+  const user = getActiveUserData();
+  return user ? { ...DEFAULT_PROGRESS, ...(user.progress || {}) } : { ...DEFAULT_PROGRESS };
 }
 function saveProgress(progress){
-  localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
+  updateActiveUserData(user => { user.progress = { ...DEFAULT_PROGRESS, ...progress }; });
 }
 function loadSettings(){
-  const raw = localStorage.getItem(SETTINGS_KEY);
-  if(!raw) return { ...DEFAULT_SETTINGS };
-  try{
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
-  } catch {
-    return { ...DEFAULT_SETTINGS };
-  }
+  const user = getActiveUserData();
+  return user ? { ...DEFAULT_SETTINGS, ...(user.settings || {}) } : { ...DEFAULT_SETTINGS };
 }
 function saveSettings(settings){
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  updateActiveUserData(user => { user.settings = { ...DEFAULT_SETTINGS, ...settings }; });
 }
 function loadShopState(){
-  const raw = localStorage.getItem(SHOP_KEY);
-  if(!raw){
-    const state = cloneDefaultShopState();
-    saveShopState(state);
-    return state;
-  }
-  try{
-    const parsed = JSON.parse(raw);
-    const state = cloneDefaultShopState();
-    state.purchased.themes = Array.from(new Set([...(parsed.purchased?.themes || []), ...state.purchased.themes]));
-    state.purchased.styles = Array.from(new Set([...(parsed.purchased?.styles || []), ...state.purchased.styles]));
-    state.purchased.decorations = Array.from(new Set([...(parsed.purchased?.decorations || []), ...state.purchased.decorations]));
-    state.equipped.theme = parsed.equipped?.theme || state.equipped.theme;
-    state.equipped.cardStyle = parsed.equipped?.cardStyle || state.equipped.cardStyle;
-    state.equipped.decoration = parsed.equipped?.decoration || state.equipped.decoration;
-    saveShopState(state);
-    return state;
-  } catch {
-    const state = cloneDefaultShopState();
-    saveShopState(state);
-    return state;
-  }
+  const user = getActiveUserData();
+  const state = normalizeShopState(user ? user.shop : null);
+  if(user) saveShopState(state);
+  return state;
 }
 
 function getShopItem(category, id){
@@ -264,7 +403,7 @@ function applyShopCosmetics(){
   body.classList.remove(...themeClasses, ...styleClasses);
   body.classList.add(`card-style-${state.equipped.cardStyle}`);
   body.dataset.decoration = state.equipped.decoration;
-  if(body.classList.contains('dark')){
+  if(document.documentElement.getAttribute('data-theme') === 'dark'){
     body.classList.add(`shop-theme-${state.equipped.theme}`);
   }
   const accent = getDecorationAccent(state.equipped.decoration);
@@ -299,6 +438,13 @@ function getTaskDueLabel(task){
 function getHoursLeft(dueDate){
   return Math.round((dueDate.getTime() - Date.now()) / (60 * 60 * 1000));
 }
+function getDaysUntilDueDate(dueDate){
+  if(Number.isNaN(dueDate.getTime())) return Infinity;
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dueStart = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+  return Math.floor((dueStart.getTime() - todayStart.getTime()) / MS_PER_DAY);
+}
 function getDaysLeft(dateString){
   const dueDate = parseDateOnly(dateString);
   const today = new Date();
@@ -309,9 +455,9 @@ function getAutoImportance(task){
   if(task.completed) return 'Low';
   const dueDate = parseTaskDueDate(task);
   if(Number.isNaN(dueDate.getTime())) return task.importance || 'Medium';
-  const hoursLeft = getHoursLeft(dueDate);
-  if(hoursLeft <= 24) return 'High';
-  if(hoursLeft <= 72) return 'Medium';
+  const daysLeft = getDaysUntilDueDate(dueDate);
+  if(daysLeft <= 2) return 'High';
+  if(daysLeft <= 5) return 'Medium';
   return 'Low';
 }
 function getPriorityRank(task){
@@ -385,9 +531,9 @@ function applyUserVisualSettings(){
     body.style.backgroundAttachment = '';
   }
   const themeMode = settings.themeMode || 'light';
-  if(themeMode === 'dark') body.classList.add('dark'); else body.classList.remove('dark');
+  if(themeMode === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); else document.documentElement.removeAttribute('data-theme');
   const button = qs('themeToggleBtn');
-  if(button) button.textContent = body.classList.contains('dark') ? 'Modo claro' : 'Modo oscuro';
+  if(button) button.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? 'Modo claro' : 'Modo oscuro';
 }
 
 function getTaskDateKey(task){
@@ -400,6 +546,10 @@ function getXpLevel(totalXp){
   return Math.max(1, Math.floor(Math.max(0, totalXp) / 100) + 1);
 }
 
+function getXpProgressPercent(totalXp){
+  return Math.max(0, Math.min(100, Math.round((Math.max(0, totalXp) % 100) / 100 * 100)));
+}
+
 function getProgressState(){
   return loadProgress();
 }
@@ -408,17 +558,34 @@ function updateProgressOnCompletion(isCompleted){
   if(!isCompleted) return;
   const progress = loadProgress();
   const today = new Date().toISOString().split('T')[0];
-  if(progress.lastCompletionDate === today){
-    return;
-  }
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayKey = yesterday.toISOString().split('T')[0];
-  progress.streak = progress.lastCompletionDate === yesterdayKey ? (progress.streak || 0) + 1 : 1;
-  progress.maxStreak = Math.max(progress.maxStreak || 0, progress.streak);
-  progress.lastCompletionDate = today;
-  progress.totalXp = (progress.totalXp || 0) + 25;
+  if(progress.lastCompletionDate !== today){
+    progress.streak = progress.lastCompletionDate === yesterdayKey ? (progress.streak || 0) + 1 : 1;
+    progress.maxStreak = Math.max(progress.maxStreak || 0, progress.streak);
+    progress.lastCompletionDate = today;
+  }
+  progress.totalXp = (progress.totalXp || 0) + 10;
   saveProgress(progress);
+}
+
+function awardTaskXpIfNeeded(task){
+  if(!task || !task.completed || task.xpAwarded) return task;
+  updateProgressOnCompletion(true);
+  task.xpAwarded = true;
+  return task;
+}
+
+function buildSubtasksFromInput(existingSubtasks = []){
+  const input = qs('taskSubtasksInput');
+  if(!input) return existingSubtasks.map(normalizeSubtask);
+  const existingByTitle = new Map(existingSubtasks.map(item => [item.title.toLowerCase(), item]));
+  return input.value
+    .split('\n')
+    .map(title => title.trim())
+    .filter(Boolean)
+    .map(title => normalizeSubtask(existingByTitle.get(title.toLowerCase()) || { title, completed: false }));
 }
 
 // --- Registration ---
@@ -429,12 +596,50 @@ function createUser(){
     alert('Por favor completa Nombre y Grado.');
     return;
   }
-  const user = { name, grade };
-  saveUser(user);
+  createUserProfile(name, grade);
+  qs('nameInput').value = '';
+  qs('gradeInput').value = '';
   loadShopState();
-  // initialize empty tasks
-  if(!localStorage.getItem(TASKS_KEY)) saveTasks([]);
+  applyUserVisualSettings();
+  renderUserSwitcher();
   showHome();
+}
+
+function renderUserSwitcher(){
+  const users = getUsers();
+  const active = loadUser();
+  const select = qs('userSwitcher');
+  if(select){
+    select.innerHTML = users.length
+      ? users.map(user => `<option value="${user.id}">${user.name}</option>`).join('')
+      : '<option value="">Sin usuarios</option>';
+    select.value = active ? active.id : '';
+    select.disabled = users.length === 0;
+  }
+  const list = qs('registerUsersList');
+  if(!list) return;
+  list.innerHTML = '';
+  if(users.length === 0){
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = 'Todavía no hay usuarios.';
+    list.appendChild(empty);
+    return;
+  }
+  users.forEach(user => {
+    const row = document.createElement('div');
+    row.className = 'user-row';
+    const label = document.createElement('span');
+    label.innerHTML = `<strong>${user.name}</strong> <small class="muted">${user.grade}</small>`;
+    const button = document.createElement('button');
+    button.className = 'btn small ghost';
+    button.textContent = active && active.id === user.id ? 'Activo' : 'Entrar';
+    button.disabled = active && active.id === user.id;
+    button.addEventListener('click', ()=>switchUser(user.id));
+    row.appendChild(label);
+    row.appendChild(button);
+    list.appendChild(row);
+  });
 }
 
 // --- Navigation / UI ---
@@ -448,6 +653,7 @@ function hideAll(){
 function showRegister(){
   hideAll();
   qs('register-section').classList.remove('hidden');
+  renderUserSwitcher();
 }
 
 function showHome(){
@@ -456,6 +662,7 @@ function showHome(){
   hideAll();
   qs('home-section').classList.remove('hidden');
   qs('greeting').textContent = `Hola, ${user.name} 👋`;
+  renderUserSwitcher();
   renderDashboard();
   renderTasks();
 }
@@ -504,6 +711,7 @@ function showCreateTask(taskId = null, projectId = ''){
   qs('taskTitle').value = task ? task.title : '';
   qs('taskSubject').value = task ? task.subject : '';
   qs('taskDateTime').value = task ? task.dueAt : '';
+  if(qs('taskSubtasksInput')) qs('taskSubtasksInput').value = task ? (task.subtasks || []).map(item => item.title).join('\n') : '';
   if(qs('taskCategory')) qs('taskCategory').value = task ? getCategoryLabel(task.category) : DEFAULT_TASK_CATEGORY;
   populateProjectSelect(task ? task.projectId || draftProjectTaskId : draftProjectTaskId);
   updateAutoImportancePreview();
@@ -606,7 +814,7 @@ function renderProfileStats(){
   qs('pointsCount').textContent = stats.points;
   if(qs('profileLevelCount')) qs('profileLevelCount').textContent = stats.level;
   if(qs('profileXpCount')) qs('profileXpCount').textContent = stats.totalXp;
-  if(qs('profileXpBar')) qs('profileXpBar').style.width = `${Math.min(100, (stats.totalXp % 100) || 5)}%`;
+  if(qs('profileXpBar')) qs('profileXpBar').style.width = `${getXpProgressPercent(stats.totalXp)}%`;
   if(qs('profileStreakCount')) qs('profileStreakCount').textContent = stats.streak;
   if(qs('profileMaxStreakCount')) qs('profileMaxStreakCount').textContent = stats.maxStreak;
 }
@@ -637,8 +845,9 @@ function renderDashboard(){
   if(nextTaskTitle) nextTaskTitle.textContent = stats.nextTask ? stats.nextTask.title : 'No hay tareas próximas';
   if(nextTaskMeta) nextTaskMeta.textContent = stats.nextTask ? `${stats.nextTask.subject} • ${getRelativeDueText(stats.nextTask)}` : 'Agrega una tarea para verla aquí.';
   if(xpValue) xpValue.textContent = `${stats.totalXp} XP`;
-  if(xpBar) xpBar.style.width = `${Math.min(100, (stats.totalXp % 100) || 5)}%`;
+  if(xpBar) xpBar.style.width = `${getXpProgressPercent(stats.totalXp)}%`;
   if(streakValue) streakValue.textContent = `${stats.streak} 🔥`;
+  renderRecommendation();
 }
 
 function renderShop(){
@@ -662,13 +871,18 @@ function renderShopCategory(containerId, category, balance){
   const container = qs(containerId);
   if(!container) return;
   const state = getShopState();
+  const isPremium = isPremiumUser();
   container.innerHTML = '';
   SHOP_CATALOG[category].forEach(item => {
     const owned = isUnlocked(category, item.id, state);
     const active = category === 'themes' ? state.equipped.theme === item.id : category === 'styles' ? state.equipped.cardStyle === item.id : state.equipped.decoration === item.id;
+    const isPremiumOnly = item.cost > 0 && category === 'themes';
+    const isLocked = isPremiumOnly && !isPremium && !owned;
+    
     const card = document.createElement('div');
     card.className = 'shop-item';
     if(active) card.classList.add('active');
+    if(isLocked) card.classList.add('premium-locked');
 
     const badge = document.createElement('div');
     badge.className = 'shop-item-badge';
@@ -690,7 +904,11 @@ function renderShopCategory(containerId, category, balance){
 
     const button = document.createElement('button');
     button.className = 'btn small primary';
-    if(active){
+    if(isLocked){
+      button.textContent = '🔒 Premium';
+      button.disabled = true;
+      button.addEventListener('click', ()=>checkPremiumAccess('Temas exclusivos'));
+    } else if(active){
       button.textContent = 'Active';
       button.disabled = true;
     } else if(owned || item.cost === 0){
@@ -868,7 +1086,8 @@ function renderNotes(){
     card.className = 'module-card';
     const header = document.createElement('div');
     header.className = 'module-card-head';
-    header.innerHTML = `<div><h3>${note.title || 'Sin título'}</h3><p class="muted">${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(note.updatedAt || Date.now()))}</p></div>`;
+    const dateStr = new Date(note.updatedAt || Date.now()).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' });
+    header.innerHTML = `<div><h3>${note.title || 'Sin título'}</h3><p class="muted">${dateStr}</p></div>`;
     const tags = document.createElement('div');
     tags.className = 'tag-row';
     (Array.isArray(note.tags) ? note.tags : []).forEach(tag => {
@@ -1323,18 +1542,23 @@ function renderSettings(){
   const fontSelect = qs('settingsFontFamily');
   const backgroundSelect = qs('settingsBackgroundMode');
   const overlayToggle = qs('settingsOverlayToggle');
+  const autoCompleteToggle = qs('settingsAutoCompleteSubtasks');
+  const premiumToggle = qs('premiumToggle');
   if(themeSelect) themeSelect.value = settings.themeMode;
   if(primaryInput) primaryInput.value = settings.primaryColor;
   if(secondaryInput) secondaryInput.value = settings.secondaryColor;
   if(fontSelect) fontSelect.value = settings.fontFamily;
   if(backgroundSelect) backgroundSelect.value = settings.backgroundMode;
   if(overlayToggle) overlayToggle.checked = settings.darkOverlay !== false;
+  if(autoCompleteToggle) autoCompleteToggle.checked = settings.autoCompleteTaskWithSubtasks !== false;
+  if(premiumToggle) premiumToggle.checked = settings.isPremium === true;
   if(qs('settingsBackgroundStatus')){
     qs('settingsBackgroundStatus').textContent = settings.backgroundImage ? 'Imagen cargada' : 'Sin imagen personalizada';
   }
   const bonusPoints = loadProgress().bonusPoints || 0;
   if(qs('settingsBonusPoints')) qs('settingsBonusPoints').value = String(bonusPoints);
   if(qs('settingsBonusStatus')) qs('settingsBonusStatus').textContent = `Puntos manuales actuales: ${bonusPoints}`;
+  renderSettingsUserCard();
 }
 
 function persistVisualSettings(){
@@ -1345,12 +1569,14 @@ function persistVisualSettings(){
   const fontSelect = qs('settingsFontFamily');
   const backgroundSelect = qs('settingsBackgroundMode');
   const overlayToggle = qs('settingsOverlayToggle');
+  const autoCompleteToggle = qs('settingsAutoCompleteSubtasks');
   settings.themeMode = themeSelect ? themeSelect.value : settings.themeMode;
   settings.primaryColor = primaryInput ? primaryInput.value : settings.primaryColor;
   settings.secondaryColor = secondaryInput ? secondaryInput.value : settings.secondaryColor;
   settings.fontFamily = fontSelect ? fontSelect.value : settings.fontFamily;
   settings.backgroundMode = backgroundSelect ? backgroundSelect.value : settings.backgroundMode;
   settings.darkOverlay = overlayToggle ? overlayToggle.checked : settings.darkOverlay;
+  settings.autoCompleteTaskWithSubtasks = autoCompleteToggle ? autoCompleteToggle.checked : settings.autoCompleteTaskWithSubtasks;
   saveSettings(settings);
   applyUserVisualSettings();
   renderDashboard();
@@ -1374,6 +1600,7 @@ function setSettingsBackgroundImage(file){
 
 function exportBackup(){
   const backup = {
+    appState: loadAppState(),
     user: loadUser(),
     tasks: loadTasks(),
     shop: getShopState(),
@@ -1398,7 +1625,12 @@ function importBackupFile(file){
   reader.onload = () => {
     try{
       const data = JSON.parse(String(reader.result || '{}'));
-      if(data.user) saveUser(data.user);
+      if(data.appState && data.appState.users){
+        saveAppState(normalizeAppState(data.appState));
+      } else if(data.user){
+        const user = createUserProfile(data.user.name || 'Usuario importado', data.user.grade || 'Sin grado');
+        saveUser({ ...data.user, id: user.id });
+      }
       if(Array.isArray(data.tasks)) saveTasks(data.tasks.map(normalizeTask));
       if(data.shop) saveShopState(data.shop);
       if(data.progress) saveProgress({ ...DEFAULT_PROGRESS, ...data.progress });
@@ -1408,6 +1640,7 @@ function importBackupFile(file){
       if(Array.isArray(data.projects)) saveProjects(data.projects.map(normalizeProject));
       applyUserVisualSettings();
       loadShopState();
+      renderUserSwitcher();
       showHome();
     } catch {
       alert('El archivo de respaldo no es válido.');
@@ -1453,7 +1686,431 @@ function resetSystem(){
   localStorage.removeItem(NOTES_KEY);
   localStorage.removeItem(CHECKLISTS_KEY);
   localStorage.removeItem(PROJECTS_KEY);
+  localStorage.removeItem(APP_STATE_KEY);
   showRegister();
+}
+
+function renderSettingsUserCard(){
+  const user = loadUser();
+  const users = getUsers();
+  const currentUserName = qs('settingsCurrentUserName');
+  const currentUserGrade = qs('settingsCurrentUserGrade');
+  const userSwitcher = qs('settingsUserSwitcher');
+  
+  if(currentUserName) currentUserName.textContent = user ? user.name : '-';
+  if(currentUserGrade) currentUserGrade.textContent = user ? user.grade : '-';
+  
+  if(userSwitcher){
+    userSwitcher.innerHTML = '<option value="">Seleccionar usuario...</option>' + 
+      users.map(u => `<option value="${u.id}" ${user && user.id === u.id ? 'selected' : ''}>${u.name}</option>`).join('');
+  }
+}
+
+function showSettingsUserForm(){
+  qs('settingsUserForm').classList.remove('hidden');
+  qs('settingsNewUserName').value = '';
+  qs('settingsNewUserGrade').value = '';
+}
+
+function hideSettingsUserForm(){
+  qs('settingsUserForm').classList.add('hidden');
+}
+
+function createSettingsUser(){
+  const name = qs('settingsNewUserName').value.trim();
+  const grade = qs('settingsNewUserGrade').value.trim();
+  if(!name || !grade){
+    alert('Por favor completa Nombre y Grado.');
+    return;
+  }
+  createUserProfile(name, grade);
+  hideSettingsUserForm();
+  renderSettingsUserCard();
+  renderUserSwitcher();
+  showHome();
+}
+
+function switchSettingsUser(userId){
+  if(!userId) return;
+  switchUser(userId);
+  renderSettingsUserCard();
+}
+
+function logoutFromSettings(){
+  if(!confirm('¿Cerrar sesión actual?')) return;
+  const users = getUsers();
+  if(users.length > 1){
+    deleteActiveUser();
+    renderSettingsUserCard();
+    renderUserSwitcher();
+    showHome();
+  } else {
+    alert('No puedes cerrar sesión si es el único usuario. Crea otra cuenta primero.');
+  }
+}
+
+function isPremiumUser(){
+  const settings = loadSettings();
+  return settings.isPremium === true;
+}
+
+function togglePremium(){
+  const settings = loadSettings();
+  settings.isPremium = !settings.isPremium;
+  saveSettings(settings);
+  renderSettings();
+  updatePremiumUI();
+}
+
+function updatePremiumUI(){
+  const isPremium = isPremiumUser();
+  
+  // Update premium toggle in settings
+  const toggle = qs('premiumToggle');
+  if(toggle) toggle.checked = isPremium;
+  
+  // Update plan list locked status
+  const lockedLists = document.querySelectorAll('.plan-list.locked');
+  lockedLists.forEach(list => {
+    if(isPremium){
+      list.classList.remove('locked');
+    } else {
+      list.classList.add('locked');
+    }
+  });
+  
+  // Update shop premium themes
+  renderShop();
+  
+  // Update premium features visibility
+  updatePremiumFeatures();
+}
+
+function updatePremiumFeatures(){
+  const isPremium = isPremiumUser();
+  
+  // Advanced statistics
+  const advancedStats = qs('advancedStatsSection');
+  if(advancedStats){
+    if(isPremium){
+      advancedStats.classList.remove('hidden');
+      renderAdvancedStats();
+    } else {
+      advancedStats.classList.add('hidden');
+    }
+  }
+  
+  // Smart recommendations
+  const smartRecs = qs('smartRecommendationsSection');
+  if(smartRecs){
+    if(isPremium){
+      smartRecs.classList.remove('hidden');
+      renderSmartRecommendations();
+    } else {
+      smartRecs.classList.add('hidden');
+    }
+  }
+  
+  // Export data button
+  const exportBtn = qs('premiumExportBtn');
+  if(exportBtn){
+    if(isPremium){
+      exportBtn.classList.remove('hidden');
+    } else {
+      exportBtn.classList.add('hidden');
+    }
+  }
+}
+
+function checkPremiumAccess(featureName){
+  if(!isPremiumUser()){
+    alert(`¡Función exclusiva de Plan Premium!\n\n${featureName} está disponible solo para usuarios Premium.\nActiva el modo Premium en Ajustes para acceder.`);
+    return false;
+  }
+  return true;
+}
+
+function renderAdvancedStats(){
+  const tasks = loadTasks();
+  const completedTasks = tasks.filter(t => t.completed);
+  const totalTasks = tasks.length;
+  const completionRate = totalTasks ? Math.round((completedTasks.length / totalTasks) * 100) : 0;
+  
+  // Tasks by category
+  const byCategory = {};
+  tasks.forEach(task => {
+    const category = getCategoryLabel(task.category);
+    byCategory[category] = (byCategory[category] || 0) + 1;
+  });
+  
+  // Tasks by importance
+  const byImportance = { High: 0, Medium: 0, Low: 0 };
+  tasks.forEach(task => {
+    const importance = getAutoImportance(task);
+    byImportance[importance]++;
+  });
+  
+  const container = qs('advancedStatsContent');
+  if(!container) return;
+  
+  container.innerHTML = `
+    <div class="stats-summary">
+      <div class="stat-item">
+        <span class="stat-label">Tasa de completado</span>
+        <span class="stat-value">${completionRate}%</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Total tareas</span>
+        <span class="stat-value">${totalTasks}</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Completadas</span>
+        <span class="stat-value">${completedTasks.length}</span>
+      </div>
+    </div>
+    <div class="stats-breakdown">
+      <h4>Por categoría</h4>
+      <div class="stats-bars">
+        ${Object.entries(byCategory).map(([cat, count]) => `
+          <div class="stat-bar">
+            <span class="stat-bar-label">${cat}</span>
+            <div class="stat-bar-track">
+              <div class="stat-bar-fill" style="width:${totalTasks ? (count/totalTasks)*100 : 0}%"></div>
+            </div>
+            <span class="stat-bar-value">${count}</span>
+          </div>
+        `).join('')}
+      </div>
+      <h4>Por importancia</h4>
+      <div class="stats-bars">
+        ${Object.entries(byImportance).map(([imp, count]) => `
+          <div class="stat-bar">
+            <span class="stat-bar-label">${imp}</span>
+            <div class="stat-bar-track">
+              <div class="stat-bar-fill importance-${imp.toLowerCase()}" style="width:${totalTasks ? (count/totalTasks)*100 : 0}%"></div>
+            </div>
+            <span class="stat-bar-value">${count}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderSmartRecommendations(){
+  const tasks = loadTasks();
+  const pendingTasks = tasks.filter(t => !t.completed);
+  const recommendations = [];
+  
+  // High priority tasks
+  const highPriorityTasks = pendingTasks.filter(t => getAutoImportance(t) === 'High');
+  if(highPriorityTasks.length > 2){
+    recommendations.push({
+      type: 'warning',
+      text: `Tienes ${highPriorityTasks.length} tareas con prioridad Alta. Te recomendamos empezar por la más corta para reducir el estrés.`
+    });
+  }
+  
+  // Overdue tasks
+  const overdueTasks = pendingTasks.filter(t => {
+    const due = parseTaskDueDate(t);
+    return !Number.isNaN(due.getTime()) && due < new Date();
+  });
+  if(overdueTasks.length > 0){
+    recommendations.push({
+      type: 'urgent',
+      text: `Tienes ${overdueTasks.length} tareas vencidas. Prioriza completarlas hoy mismo.`
+    });
+  }
+  
+  // Productivity tip
+  const completedToday = tasks.filter(t => t.completed).length;
+  if(completedToday > 5){
+    recommendations.push({
+      type: 'success',
+      text: `¡Excelente productividad! Has completado ${completedToday} tareas. Considera tomar un descanso breve.`
+    });
+  }
+  
+  // Category balance
+  const byCategory = {};
+  pendingTasks.forEach(task => {
+    const category = getCategoryLabel(task.category);
+    byCategory[category] = (byCategory[category] || 0) + 1;
+  });
+  const dominantCategory = Object.entries(byCategory).sort((a, b) => b[1] - a[1])[0];
+  if(dominantCategory && dominantCategory[1] > 3){
+    recommendations.push({
+      type: 'info',
+      text: `La mayoría de tus tareas pendientes son de "${dominantCategory[0]}". Considera equilibrar tu carga de trabajo.`
+    });
+  }
+  
+  const container = qs('smartRecommendationsContent');
+  if(!container) return;
+  
+  if(recommendations.length === 0){
+    container.innerHTML = '<p class="muted">No hay recomendaciones específicas en este momento. ¡Sigue así!</p>';
+    return;
+  }
+  
+  container.innerHTML = recommendations.map(rec => `
+    <div class="recommendation-item ${rec.type}">
+      <span class="recommendation-icon">${rec.type === 'urgent' ? '⚠️' : rec.type === 'warning' ? '🔔' : rec.type === 'success' ? '✅' : '💡'}</span>
+      <span class="recommendation-text">${rec.text}</span>
+    </div>
+  `).join('');
+}
+
+function exportPremiumData(){
+  if(!checkPremiumAccess('Exportar datos')) return;
+  
+  const user = loadUser();
+  const tasks = loadTasks();
+  const stats = getTaskStats();
+  
+  const exportData = {
+    usuario: user ? user.name : 'N/A',
+    fechaExportacion: new Date().toISOString(),
+    estadisticas: {
+      totalTareas: stats.totalTasks,
+      tareasCompletadas: stats.completed,
+      tareasPendientes: stats.left,
+      puntos: stats.points,
+      nivel: stats.level,
+      xpTotal: stats.totalXp,
+      racha: stats.streak
+    },
+    tareas: tasks.map(task => ({
+      titulo: task.title,
+      materia: task.subject,
+      categoria: getCategoryLabel(task.category),
+      estado: task.completed ? 'Completada' : 'Pendiente',
+      importancia: getAutoImportance(task),
+      fechaEntrega: task.dueAt,
+      proyecto: getProjectLabel(task.projectId),
+      subtareas: task.subtasks.length
+    }))
+  };
+  
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `taskflow-export-${user ? user.name : 'usuario'}-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+// --- Focus Mode (Pomodoro) ---
+let focusTimerInterval = null;
+let focusTimeRemaining = 25 * 60; // 25 minutes in seconds
+let focusTaskId = null;
+let focusIsRunning = false;
+
+function enterFocusMode(taskId = null){
+  const tasks = loadTasks();
+  const pendingTasks = tasks.filter(t => !t.completed);
+  
+  if(pendingTasks.length === 0){
+    alert('No tienes tareas pendientes para enfocarte.');
+    return;
+  }
+  
+  focusTaskId = taskId || pendingTasks[0].id;
+  const task = tasks.find(t => t.id === focusTaskId);
+  
+  if(!task) return;
+  
+  hideAll();
+  qs('focusModeSection').classList.remove('hidden');
+  
+  qs('focusTaskTitle').textContent = task.title;
+  qs('focusTaskSubject').textContent = task.subject;
+  qs('focusTaskMeta').textContent = `${getCategoryLabel(task.category)} • ${getRelativeDueText(task)}`;
+  
+  resetFocusTimer();
+}
+
+function exitFocusMode(){
+  pauseFocusTimer();
+  hideAll();
+  showHome();
+}
+
+function resetFocusTimer(){
+  pauseFocusTimer();
+  focusTimeRemaining = 25 * 60;
+  updateTimerDisplay();
+  qs('timerStatus').textContent = 'Listo para comenzar';
+  qs('startTimerBtn').classList.remove('hidden');
+  qs('pauseTimerBtn').classList.add('hidden');
+}
+
+function startFocusTimer(){
+  if(focusIsRunning) return;
+  focusIsRunning = true;
+  qs('timerStatus').textContent = '🎯 Enfócate en tu tarea';
+  qs('startTimerBtn').classList.add('hidden');
+  qs('pauseTimerBtn').classList.remove('hidden');
+  
+  focusTimerInterval = setInterval(() => {
+    focusTimeRemaining--;
+    updateTimerDisplay();
+    
+    if(focusTimeRemaining <= 0){
+      pauseFocusTimer();
+      qs('timerStatus').textContent = '🎉 ¡Tiempo completado! Tómate un descanso.';
+      if(confirm('¡Tiempo completado! ¿Quieres marcar la tarea como completada?')){
+        completeFocusTask();
+      }
+    }
+  }, 1000);
+}
+
+function pauseFocusTimer(){
+  focusIsRunning = false;
+  if(focusTimerInterval){
+    clearInterval(focusTimerInterval);
+    focusTimerInterval = null;
+  }
+  qs('timerStatus').textContent = focusTimeRemaining > 0 ? 'Pausado' : 'Completado';
+  qs('startTimerBtn').classList.remove('hidden');
+  qs('pauseTimerBtn').classList.add('hidden');
+}
+
+function updateTimerDisplay(){
+  const minutes = Math.floor(focusTimeRemaining / 60);
+  const seconds = focusTimeRemaining % 60;
+  qs('timerDisplay').textContent = `${pad2(minutes)}:${pad2(seconds)}`;
+  document.title = `${pad2(minutes)}:${pad2(seconds)} - Modo Enfoque`;
+}
+
+function completeFocusTask(){
+  if(!focusTaskId) return;
+  const tasks = loadTasks();
+  const index = tasks.findIndex(t => t.id === focusTaskId);
+  if(index !== -1){
+    tasks[index].completed = true;
+    awardTaskXpIfNeeded(tasks[index]);
+    saveTasks(tasks);
+    refreshAfterCoreDataChange();
+  }
+  exitFocusMode();
+}
+
+function skipFocusTask(){
+  const tasks = loadTasks();
+  const pendingTasks = tasks.filter(t => !t.completed && t.id !== focusTaskId);
+  
+  if(pendingTasks.length === 0){
+    alert('No hay más tareas pendientes.');
+    exitFocusMode();
+    return;
+  }
+  
+  resetFocusTimer();
+  enterFocusMode(pendingTasks[0].id);
 }
 
 // --- Tasks ---
@@ -1479,7 +2136,8 @@ function createTask(){
       subject,
       dueAt,
       category,
-      projectId
+      projectId,
+      subtasks: buildSubtasksFromInput(tasks[index].subtasks || [])
     };
     saveTasks(tasks);
     editingTaskId = null;
@@ -1489,7 +2147,7 @@ function createTask(){
     return;
   }
   if(new Date(dueAt) < new Date()){ alert('La fecha y hora deben ser ahora o después.'); return; }
-  const task = { id: generateTaskId(), title, subject, dueAt, completed: false, category, projectId };
+  const task = { id: generateTaskId(), title, subject, dueAt, completed: false, category, projectId, subtasks: buildSubtasksFromInput([]), xpAwarded: false };
   tasks.push(task);
   saveTasks(tasks);
   draftProjectTaskId = '';
@@ -1498,7 +2156,104 @@ function createTask(){
 }
 
 function sortTasks(tasks, mode = currentSortMode){
-  return tasks.slice().sort((a, b) => parseTaskDueDate(a) - parseTaskDueDate(b));
+  return tasks.slice().sort((a, b) => {
+    const dateDiff = parseTaskDueDate(a) - parseTaskDueDate(b);
+    return mode === 'latest' ? -dateDiff : dateDiff;
+  });
+}
+
+function getRecommendedTask(tasks = loadTasks()){
+  return tasks
+    .filter(task => !task.completed)
+    .slice()
+    .sort((a, b) => {
+      const priorityDiff = getPriorityRank(b) - getPriorityRank(a);
+      if(priorityDiff) return priorityDiff;
+      return parseTaskDueDate(a) - parseTaskDueDate(b);
+    })[0] || null;
+}
+
+function getPriorityClass(importance){
+  if(importance === 'High') return 'high';
+  if(importance === 'Medium') return 'medium';
+  return 'low';
+}
+
+function renderRecommendation(){
+  const title = qs('recommendationTitle');
+  const meta = qs('recommendationMeta');
+  const priority = qs('recommendationPriority');
+  if(!title || !meta || !priority) return;
+  const task = getRecommendedTask();
+  priority.className = 'priority-pill low';
+  if(!task){
+    title.textContent = '¡Todo listo!';
+    meta.textContent = 'No tienes tareas pendientes. Buen trabajo.';
+    priority.textContent = 'Sin pendientes';
+    return;
+  }
+  const importance = getAutoImportance(task);
+  title.textContent = task.title;
+  meta.textContent = `${task.subject} · ${getRelativeDueText(task)} · ${getTaskDueLabel(task)}`;
+  priority.className = `priority-pill ${getPriorityClass(importance)}`;
+  priority.textContent = `Prioridad ${getImportanceLabel(importance)}`;
+}
+
+function refreshTaskCompletionFromSubtasks(task){
+  const settings = loadSettings();
+  if(!settings.autoCompleteTaskWithSubtasks || !task.subtasks.length) return;
+  const allDone = task.subtasks.every(subtask => subtask.completed);
+  if(allDone && !task.completed){
+    task.completed = true;
+    awardTaskXpIfNeeded(task);
+  }
+}
+
+function toggleSubtask(taskId, subtaskId){
+  const tasks = loadTasks();
+  const task = tasks.find(item => item.id === taskId);
+  if(!task) return;
+  const subtask = task.subtasks.find(item => item.id === subtaskId);
+  if(!subtask) return;
+  subtask.completed = !subtask.completed;
+  refreshTaskCompletionFromSubtasks(task);
+  saveTasks(tasks);
+  refreshAfterCoreDataChange();
+}
+
+function addSubtask(taskId){
+  const input = qs(`subtask-input-${taskId}`);
+  const value = input ? input.value.trim() : '';
+  if(!value) return;
+  const tasks = loadTasks();
+  const task = tasks.find(item => item.id === taskId);
+  if(!task) return;
+  task.subtasks.push({ id: generateEntityId('subtask'), title: value, completed: false });
+  if(task.completed) task.completed = false;
+  saveTasks(tasks);
+  refreshAfterCoreDataChange();
+}
+
+function editSubtask(taskId, subtaskId){
+  const tasks = loadTasks();
+  const task = tasks.find(item => item.id === taskId);
+  if(!task) return;
+  const subtask = task.subtasks.find(item => item.id === subtaskId);
+  if(!subtask) return;
+  const nextTitle = prompt('Editar subtarea', subtask.title);
+  if(nextTitle === null) return;
+  subtask.title = nextTitle.trim() || subtask.title;
+  saveTasks(tasks);
+  refreshAfterCoreDataChange();
+}
+
+function deleteSubtask(taskId, subtaskId){
+  const tasks = loadTasks();
+  const task = tasks.find(item => item.id === taskId);
+  if(!task) return;
+  task.subtasks = task.subtasks.filter(item => item.id !== subtaskId);
+  saveTasks(tasks);
+  refreshAfterCoreDataChange();
 }
 
 function updateAutoImportancePreview(){
@@ -1528,7 +2283,6 @@ function renderTasks(){
     el.className = 'no-tasks';
     el.innerHTML = `<p>No hay tareas aún</p><div style="margin-top:8px"><button id="addTaskEmptyBtn" class="btn primary">Agregar tarea</button></div>`;
     container.appendChild(el);
-    // add listener for empty add
     setTimeout(()=>{
       const btn = qs('addTaskEmptyBtn'); if(btn) btn.addEventListener('click', showCreateTask);
     },0);
@@ -1586,11 +2340,9 @@ function renderTasks(){
     deleteBtn.addEventListener('click', ()=>deleteTask(realIndex));
     right.appendChild(deleteBtn);
 
-    // make card focusable for keyboard navigation
     card.tabIndex = 0;
     card.setAttribute('role','article');
     card.setAttribute('aria-label', `${t.title}, ${t.subject}, categoría ${categoryLabel}, proyecto ${projectLabel}, entrega ${getTaskDueLabel(t)}, importancia ${importanceLabel}`);
-    // arrow-key navigation: left/right/up/down
     card.addEventListener('keydown', (ev)=>{
       if(ev.target !== card) return;
       if(ev.key === 'ArrowRight' || ev.key === 'ArrowDown'){
@@ -1598,18 +2350,53 @@ function renderTasks(){
       } else if(ev.key === 'ArrowLeft' || ev.key === 'ArrowUp'){
         ev.preventDefault(); focusNextCard(card, -1);
       } else if(ev.key === 'Enter'){
-        // toggle checkbox on Enter when card itself is focused
         ev.preventDefault(); const realIndex = getRealIndex(idx, filtered, tasks); toggleTask(realIndex);
       }
     });
 
     top.appendChild(left); top.appendChild(right);
 
-    // footer: status
     const footer = document.createElement('div'); footer.className = 'task-meta';
     footer.textContent = t.completed ? 'Completada' : 'Pendiente';
 
     card.appendChild(top); card.appendChild(footer);
+    if(t.subtasks && t.subtasks.length){
+      const subtasksList = document.createElement('div');
+      subtasksList.className = 'subtasks-list';
+      t.subtasks.forEach(subtask => {
+        const row = document.createElement('div');
+        row.className = `subtask-row ${subtask.completed ? 'completed' : ''}`;
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = subtask.completed;
+        checkbox.setAttribute('aria-label', `Completar subtarea ${subtask.title}`);
+        checkbox.addEventListener('change', ()=>toggleSubtask(t.id, subtask.id));
+        const text = document.createElement('span');
+        text.textContent = subtask.title;
+        const actions = document.createElement('div');
+        actions.className = 'task-actions';
+        const editSubtaskBtn = document.createElement('button');
+        editSubtaskBtn.className = 'btn ghost small';
+        editSubtaskBtn.textContent = 'Editar';
+        editSubtaskBtn.addEventListener('click', ()=>editSubtask(t.id, subtask.id));
+        const deleteSubtaskBtn = document.createElement('button');
+        deleteSubtaskBtn.className = 'btn danger small';
+        deleteSubtaskBtn.textContent = 'Eliminar';
+        deleteSubtaskBtn.addEventListener('click', ()=>deleteSubtask(t.id, subtask.id));
+        actions.appendChild(editSubtaskBtn);
+        actions.appendChild(deleteSubtaskBtn);
+        row.appendChild(checkbox);
+        row.appendChild(text);
+        row.appendChild(actions);
+        subtasksList.appendChild(row);
+      });
+      card.appendChild(subtasksList);
+    }
+    const addSubtaskRow = document.createElement('div');
+    addSubtaskRow.className = 'subtask-add-row';
+    addSubtaskRow.innerHTML = `<input id="subtask-input-${t.id}" type="text" placeholder="Nueva subtarea" /><button class="btn primary small" type="button">Agregar</button>`;
+    addSubtaskRow.querySelector('button').addEventListener('click', ()=>addSubtask(t.id));
+    card.appendChild(addSubtaskRow);
     container.appendChild(card);
   });
 }
@@ -1642,9 +2429,9 @@ function applyFilters(tasks){
 }
 
 function getImportanceLabel(value){
-  if(value === 'High') return 'Alta';
-  if(value === 'Low') return 'Baja';
-  return 'Media';
+  if(value === 'High') return '🔴 Alta';
+  if(value === 'Low') return '🟢 Baja';
+  return '🟡 Media';
 }
 
 function populateSubjectFilter(){
@@ -1652,7 +2439,6 @@ function populateSubjectFilter(){
   if(!select) return;
   const tasks = loadTasks();
   const subjects = Array.from(new Set(tasks.map(t=>t.subject))).filter(Boolean).sort();
-  // clear existing (keep 'All')
   select.innerHTML = '<option value="All">Todas</option>' + subjects.map(s=>`<option value="${s}">${s}</option>`).join('');
   select.value = currentFilters.subject || 'All';
 }
@@ -1684,7 +2470,7 @@ function toggleTask(index){
   const tasks = loadTasks();
   if(!tasks || !tasks[index]) return;
   tasks[index].completed = !tasks[index].completed;
-  updateProgressOnCompletion(tasks[index].completed);
+  awardTaskXpIfNeeded(tasks[index]);
   saveTasks(tasks);
   refreshAfterCoreDataChange();
 }
@@ -1724,6 +2510,7 @@ function saveProfile(){
   if(!name || !grade){ alert('Por favor completa ambos campos.'); return; }
   const user = { name, grade };
   saveUser(user);
+  renderUserSwitcher();
   showProfile();
 }
 
@@ -1758,6 +2545,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if(qs('projectSaveBtn')) qs('projectSaveBtn').addEventListener('click', saveProject);
   if(qs('projectCancelBtn')) qs('projectCancelBtn').addEventListener('click', resetProjectForm);
   if(qs('openShopBtn')) qs('openShopBtn').addEventListener('click', showShop);
+  if(qs('enterFocusBtn')) qs('enterFocusBtn').addEventListener('click', ()=>enterFocusMode());
   if(qs('closeShopBtn')) qs('closeShopBtn').addEventListener('click', showHome);
   if(qs('openCalendarBtn')) qs('openCalendarBtn').addEventListener('click', showCalendar);
   if(qs('closeCalendarBtn')) qs('closeCalendarBtn').addEventListener('click', showHome);
@@ -1771,6 +2559,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if(qs('settingsFontFamily')) qs('settingsFontFamily').addEventListener('change', persistVisualSettings);
   if(qs('settingsBackgroundMode')) qs('settingsBackgroundMode').addEventListener('change', persistVisualSettings);
   if(qs('settingsOverlayToggle')) qs('settingsOverlayToggle').addEventListener('change', persistVisualSettings);
+  if(qs('settingsAutoCompleteSubtasks')) qs('settingsAutoCompleteSubtasks').addEventListener('change', persistVisualSettings);
   if(qs('settingsBackgroundInput')) qs('settingsBackgroundInput').addEventListener('change', (e)=>setSettingsBackgroundImage(e.target.files && e.target.files[0]));
   if(qs('settingsExportBtn')) qs('settingsExportBtn').addEventListener('click', exportBackup);
   if(qs('settingsImportBtn')) qs('settingsImportBtn').addEventListener('click', ()=>qs('settingsImportInput') && qs('settingsImportInput').click());
@@ -1778,6 +2567,19 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if(qs('settingsApplyBonusBtn')) qs('settingsApplyBonusBtn').addEventListener('click', applyManualPoints);
   if(qs('settingsClearBonusBtn')) qs('settingsClearBonusBtn').addEventListener('click', clearManualPoints);
   if(qs('settingsResetBtn')) qs('settingsResetBtn').addEventListener('click', resetSystem);
+  if(qs('settingsCreateUserBtn')) qs('settingsCreateUserBtn').addEventListener('click', showSettingsUserForm);
+  if(qs('settingsSaveUserBtn')) qs('settingsSaveUserBtn').addEventListener('click', createSettingsUser);
+  if(qs('settingsCancelUserBtn')) qs('settingsCancelUserBtn').addEventListener('click', hideSettingsUserForm);
+  if(qs('settingsUserSwitcher')) qs('settingsUserSwitcher').addEventListener('change', (e)=>switchSettingsUser(e.target.value));
+  if(qs('settingsLogoutBtn')) qs('settingsLogoutBtn').addEventListener('click', logoutFromSettings);
+  if(qs('premiumToggle')) qs('premiumToggle').addEventListener('change', togglePremium);
+  if(qs('premiumExportBtn')) qs('premiumExportBtn').addEventListener('click', exportPremiumData);
+  if(qs('exitFocusBtn')) qs('exitFocusBtn').addEventListener('click', exitFocusMode);
+  if(qs('startTimerBtn')) qs('startTimerBtn').addEventListener('click', startFocusTimer);
+  if(qs('pauseTimerBtn')) qs('pauseTimerBtn').addEventListener('click', pauseFocusTimer);
+  if(qs('resetTimerBtn')) qs('resetTimerBtn').addEventListener('click', resetFocusTimer);
+  if(qs('completeFocusTaskBtn')) qs('completeFocusTaskBtn').addEventListener('click', completeFocusTask);
+  if(qs('skipFocusTaskBtn')) qs('skipFocusTaskBtn').addEventListener('click', skipFocusTask);
   qs('profileBtn').addEventListener('click', showProfile);
   qs('closeProfileBtn').addEventListener('click', showHome);
   qs('deleteAccountBtn').addEventListener('click', deleteAccount);
@@ -1785,6 +2587,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   qs('saveProfileBtn').addEventListener('click', saveProfile);
   qs('cancelEditProfileBtn').addEventListener('click', ()=>{ qs('editProfileForm').classList.add('hidden'); });
   qs('themeToggleBtn').addEventListener('click', toggleTheme);
+  if(qs('userSwitcher')) qs('userSwitcher').addEventListener('change', (e)=>switchUser(e.target.value));
 
   // If user exists, show home, otherwise register
   const user = loadUser();
@@ -1796,6 +2599,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   loadShopState();
   applySavedTheme();
   applyShopCosmetics();
+  updatePremiumUI();
   if(qs('sortTasksBy')) qs('sortTasksBy').value = currentSortMode;
   if(qs('taskDateTime')) qs('taskDateTime').addEventListener('input', updateAutoImportancePreview);
 
@@ -1803,7 +2607,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   document.addEventListener('keydown', (e)=>{
     const tag = (e.target && e.target.tagName) || '';
     const typing = ['INPUT','TEXTAREA','SELECT'].includes(tag) || e.target.isContentEditable;
-    if(typing) return; // don't intercept when typing
+    if(typing) return;
     if(e.key === 'n' || e.key === 'N'){
       e.preventDefault(); showCreateTask();
     } else if(e.key === 'p' || e.key === 'P'){
@@ -1820,28 +2624,29 @@ document.addEventListener('DOMContentLoaded', ()=>{
     const idx = cards.indexOf(currentCard);
     let next = idx + offset;
     if(next < 0) next = cards.length - 1;
-    if(next >= cards.length) next = 0;
+    if(next >= cards.length) return 0;
     const target = cards[next];
     if(target) target.focus();
   }
 });
 
 function toggleTheme(){
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+  const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('studyflow_theme', newTheme);
   const settings = loadSettings();
-  settings.themeMode = document.body.classList.contains('dark') ? 'light' : 'dark';
+  settings.themeMode = newTheme;
   saveSettings(settings);
-  localStorage.setItem('studyflow_theme', settings.themeMode);
   applyUserVisualSettings();
 }
 
 function applySavedTheme(){
+  const savedTheme = localStorage.getItem('studyflow_theme') || 'light';
+  document.documentElement.setAttribute('data-theme', savedTheme);
   const settings = loadSettings();
-  if(!localStorage.getItem(SETTINGS_KEY)){
-    const saved = localStorage.getItem('studyflow_theme');
-    if(saved === 'dark') settings.themeMode = 'dark';
-  }
+  settings.themeMode = savedTheme;
   saveSettings(settings);
-  localStorage.setItem('studyflow_theme', settings.themeMode);
   applyUserVisualSettings();
   applyShopCosmetics();
 }
