@@ -10,6 +10,32 @@ const NOTES_KEY = 'studyflow_notes';
 const CHECKLISTS_KEY = 'studyflow_checklists';
 const PROJECTS_KEY = 'studyflow_projects';
 const APP_STATE_KEY = 'studyflow_app_state';
+
+// Supabase configuration
+const SUPABASE_URL = 'https://bqzzxhcdatcicyznxrzx.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJxenp4aGNkYXRjaWN5em54cnp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwNTUwNDIsImV4cCI6MjA5OTYzMTA0Mn0.H-SK11n70yNl8yM6QV9fg5N39496aBgziZ_X_m8uPno';
+let supabaseClient = null;
+
+// Initialize Supabase when available
+function initSupabase(){
+  try {
+    if(window.supabase && window.supabase.createClient){
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+      console.log('Supabase initialized successfully');
+    } else {
+      console.warn('Supabase SDK not loaded yet, will retry later');
+    }
+  } catch(e){
+    console.error('Error initializing Supabase:', e);
+  }
+}
+
+// Try to initialize immediately
+initSupabase();
+
+// Also try on window load in case CDN is slow
+window.addEventListener('load', initSupabase);
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const TASK_CATEGORIES = ['Study', 'Work', 'Personal', 'Game Development', 'Health', 'Learning', 'Creative', 'Other'];
@@ -243,6 +269,42 @@ function loadTasks(){
 }
 function saveTasks(tasks){
   updateActiveUserData(user => { user.tasks = tasks.map(normalizeTask); });
+  
+  // Autosave to Supabase in background
+  syncTasksToSupabase(tasks);
+}
+
+async function syncTasksToSupabase(tasks){
+  try {
+    if(!supabaseClient){
+      console.warn('Supabase not initialized, skipping sync');
+      return;
+    }
+    
+    const user = getActiveUserData();
+    if(!user) return;
+    
+    for(const task of tasks) {
+      const taskData = {
+        id: task.id,
+        user_id: user.id,
+        titulo: task.title,
+        materia: task.subject,
+        fecha_entrega: task.dueAt,
+        categoria: task.category,
+        proyecto_id: task.projectId || null,
+        completada: task.completed,
+        subtareas: task.subtasks || [],
+        es_flexible: task.es_flexible || false
+      };
+      
+      await supabaseClient
+        .from('tareas')
+        .upsert(taskData, { onConflict: 'id' });
+    }
+  } catch(e) {
+    console.error('Error syncing to Supabase:', e);
+  }
 }
 function mapStorageKeyToUserProp(key){
   return {
@@ -713,6 +775,19 @@ function showCreateTask(taskId = null, projectId = ''){
   qs('taskDateTime').value = task ? task.dueAt : '';
   if(qs('taskSubtasksInput')) qs('taskSubtasksInput').value = task ? (task.subtasks || []).map(item => item.title).join('\n') : '';
   if(qs('taskCategory')) qs('taskCategory').value = task ? getCategoryLabel(task.category) : DEFAULT_TASK_CATEGORY;
+  
+  // Handle flexible task checkbox
+  const flexibleCheckbox = qs('taskFlexible');
+  const dateTimeRow = qs('taskDateTimeRow');
+  if(flexibleCheckbox){
+    flexibleCheckbox.checked = task ? (task.es_flexible || false) : false;
+    if(flexibleCheckbox.checked){
+      dateTimeRow.classList.add('hidden');
+    } else {
+      dateTimeRow.classList.remove('hidden');
+    }
+  }
+  
   populateProjectSelect(task ? task.projectId || draftProjectTaskId : draftProjectTaskId);
   updateAutoImportancePreview();
 }
@@ -2032,6 +2107,73 @@ function enterFocusMode(taskId = null){
   resetFocusTimer();
 }
 
+function showGoals(){
+  const user = loadUser();
+  if(!user){ showRegister(); return; }
+  hideAll();
+  qs('goals-section').classList.remove('hidden');
+  renderGoals();
+}
+
+function renderGoals(){
+  const tasks = loadTasks();
+  const flexibleTasks = tasks.filter(t => t.es_flexible === true);
+  const container = qs('goalsContainer');
+  if(!container) return;
+  
+  if(flexibleTasks.length === 0){
+    container.innerHTML = '<p class="muted">No tienes objetivos personales aún. Crea una tarea marcando "Objetivo Personal".</p>';
+    return;
+  }
+  
+  container.innerHTML = '';
+  flexibleTasks.forEach(task => {
+    const card = document.createElement('div');
+    card.className = 'task-card';
+    if(task.completed) card.classList.add('completed');
+    
+    const importance = getAutoImportance(task);
+    const importanceClass = getPriorityClass(importance);
+    
+    card.innerHTML = `
+      <div class="task-header">
+        <h3>${task.title}</h3>
+        <span class="priority-pill ${importanceClass}">${importance}</span>
+      </div>
+      <p class="muted">${task.subject}</p>
+      <p class="muted small">${getCategoryLabel(task.category)}</p>
+      <div class="task-actions">
+        <button class="btn small ghost edit-goal-btn">Editar</button>
+        <button class="btn small primary toggle-goal-btn">${task.completed ? 'Reabrir' : 'Completar'}</button>
+        <button class="btn small ghost delete-goal-btn">Eliminar</button>
+      </div>
+    `;
+    
+    card.querySelector('.edit-goal-btn').addEventListener('click', () => showCreateTask(task.id));
+    card.querySelector('.toggle-goal-btn').addEventListener('click', () => {
+      const index = tasks.findIndex(t => t.id === task.id);
+      if(index !== -1){
+        tasks[index].completed = !tasks[index].completed;
+        awardTaskXpIfNeeded(tasks[index]);
+        saveTasks(tasks);
+        renderGoals();
+      }
+    });
+    card.querySelector('.delete-goal-btn').addEventListener('click', () => {
+      if(confirm(`¿Eliminar "${task.title}"?`)){
+        const index = tasks.findIndex(t => t.id === task.id);
+        if(index !== -1){
+          tasks.splice(index, 1);
+          saveTasks(tasks);
+          renderGoals();
+        }
+      }
+    });
+    
+    container.appendChild(card);
+  });
+}
+
 function exitFocusMode(){
   pauseFocusTimer();
   hideAll();
@@ -2118,10 +2260,14 @@ function createTask(){
   // called when Save Task pressed
   const title = qs('taskTitle').value.trim();
   const subject = qs('taskSubject').value.trim();
-  const dueAt = qs('taskDateTime').value;
+  const isFlexible = qs('taskFlexible') ? qs('taskFlexible').checked : false;
+  const dueAt = isFlexible ? '' : qs('taskDateTime').value;
   const category = qs('taskCategory') ? qs('taskCategory').value : DEFAULT_TASK_CATEGORY;
   const projectId = qs('taskProject') ? qs('taskProject').value : '';
-  if(!title || !subject || !dueAt){ alert('Por favor completa todos los campos de la tarea.'); return; }
+  
+  if(!title || !subject){ alert('Por favor completa nombre y materia de la tarea.'); return; }
+  if(!isFlexible && !dueAt){ alert('Por favor completa la fecha y hora de entrega.'); return; }
+  
   const tasks = loadTasks();
   if(editingTaskId){
     const index = tasks.findIndex(task => task.id === editingTaskId);
@@ -2134,9 +2280,10 @@ function createTask(){
       ...tasks[index],
       title,
       subject,
-      dueAt,
+      dueAt: isFlexible ? '' : dueAt,
       category,
       projectId,
+      es_flexible: isFlexible,
       subtasks: buildSubtasksFromInput(tasks[index].subtasks || [])
     };
     saveTasks(tasks);
@@ -2146,8 +2293,8 @@ function createTask(){
     showHome();
     return;
   }
-  if(new Date(dueAt) < new Date()){ alert('La fecha y hora deben ser ahora o después.'); return; }
-  const task = { id: generateTaskId(), title, subject, dueAt, completed: false, category, projectId, subtasks: buildSubtasksFromInput([]), xpAwarded: false };
+  if(!isFlexible && new Date(dueAt) < new Date()){ alert('La fecha y hora deben ser ahora o después.'); return; }
+  const task = { id: generateTaskId(), title, subject, dueAt, completed: false, category, projectId, subtasks: buildSubtasksFromInput([]), xpAwarded: false, es_flexible: isFlexible };
   tasks.push(task);
   saveTasks(tasks);
   draftProjectTaskId = '';
@@ -2276,9 +2423,10 @@ function renderTasks(){
   const container = qs('tasksContainer');
   container.innerHTML = '';
   const tasks = loadTasks();
-  const sortedTasks = sortTasks(tasks);
+  const regularTasks = tasks.filter(t => !t.es_flexible); // Exclude flexible tasks
+  const sortedTasks = sortTasks(regularTasks);
   const filtered = applyFilters(sortedTasks);
-  if(!tasks || tasks.length === 0){
+  if(!regularTasks || regularTasks.length === 0){
     const el = document.createElement('div');
     el.className = 'no-tasks';
     el.innerHTML = `<p>No hay tareas aún</p><div style="margin-top:8px"><button id="addTaskEmptyBtn" class="btn primary">Agregar tarea</button></div>`;
@@ -2514,6 +2662,27 @@ function saveProfile(){
   showProfile();
 }
 
+function toggleTheme(){
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+  const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('studyflow_theme', newTheme);
+  const settings = loadSettings();
+  settings.themeMode = newTheme;
+  saveSettings(settings);
+  applyUserVisualSettings();
+}
+
+function applySavedTheme(){
+  const savedTheme = localStorage.getItem('studyflow_theme') || 'light';
+  document.documentElement.setAttribute('data-theme', savedTheme);
+  const settings = loadSettings();
+  settings.themeMode = savedTheme;
+  saveSettings(settings);
+  applyUserVisualSettings();
+  applyShopCosmetics();
+}
+
 // --- Event bindings ---
 document.addEventListener('DOMContentLoaded', ()=>{
   // Elements
@@ -2521,6 +2690,14 @@ document.addEventListener('DOMContentLoaded', ()=>{
   qs('addTaskBtn').addEventListener('click', showCreateTask);
   qs('saveTaskBtn').addEventListener('click', createTask);
   qs('cancelTaskBtn').addEventListener('click', ()=>{ editingTaskId = null; showHome(); });
+  if(qs('taskFlexible')) qs('taskFlexible').addEventListener('change', (e)=>{
+    const dateTimeRow = qs('taskDateTimeRow');
+    if(e.target.checked){
+      dateTimeRow.classList.add('hidden');
+    } else {
+      dateTimeRow.classList.remove('hidden');
+    }
+  });
   // filters
   if(qs('taskSearchInput')) qs('taskSearchInput').addEventListener('input', debounce((e)=>{ currentSearchQuery = e.target.value || ''; renderTasks(); }, 140));
   if(qs('filterSubject')) qs('filterSubject').addEventListener('change', (e)=>{ currentFilters.subject = e.target.value; renderTasks(); });
@@ -2546,6 +2723,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if(qs('projectCancelBtn')) qs('projectCancelBtn').addEventListener('click', resetProjectForm);
   if(qs('openShopBtn')) qs('openShopBtn').addEventListener('click', showShop);
   if(qs('enterFocusBtn')) qs('enterFocusBtn').addEventListener('click', ()=>enterFocusMode());
+  if(qs('openGoalsBtn')) qs('openGoalsBtn').addEventListener('click', showGoals);
+  if(qs('closeGoalsBtn')) qs('closeGoalsBtn').addEventListener('click', showHome);
   if(qs('closeShopBtn')) qs('closeShopBtn').addEventListener('click', showHome);
   if(qs('openCalendarBtn')) qs('openCalendarBtn').addEventListener('click', showCalendar);
   if(qs('closeCalendarBtn')) qs('closeCalendarBtn').addEventListener('click', showHome);
@@ -2629,24 +2808,3 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(target) target.focus();
   }
 });
-
-function toggleTheme(){
-  const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
-  const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-  document.documentElement.setAttribute('data-theme', newTheme);
-  localStorage.setItem('studyflow_theme', newTheme);
-  const settings = loadSettings();
-  settings.themeMode = newTheme;
-  saveSettings(settings);
-  applyUserVisualSettings();
-}
-
-function applySavedTheme(){
-  const savedTheme = localStorage.getItem('studyflow_theme') || 'light';
-  document.documentElement.setAttribute('data-theme', savedTheme);
-  const settings = loadSettings();
-  settings.themeMode = savedTheme;
-  saveSettings(settings);
-  applyUserVisualSettings();
-  applyShopCosmetics();
-}

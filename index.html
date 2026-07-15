@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>TaskFlow</title>
 <link rel="stylesheet" href="style.css" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 <header class="app-header">
@@ -96,6 +97,7 @@
 <div class="dashboard-actions">
 <button id="openShopBtn" class="btn primary">Open Shop</button>
 <button id="enterFocusBtn" class="btn primary">🎯 Modo Enfoque</button>
+<button id="openGoalsBtn" class="btn primary">📚 Objetivos Personales</button>
 </div>
 </div>
 <section class="recommendation-card" aria-label="Qué hago ahora">
@@ -155,6 +157,24 @@
 <button id="skipFocusTaskBtn" class="btn ghost">Omitir tarea</button>
 </div>
 </div>
+</section>
+
+<!-- Sección Objetivos Personales -->
+<section id="goals-section" class="card hidden">
+<div class="section-header">
+<div>
+<h2>📚 Objetivos Personales</h2>
+<p class="muted">Tareas sin fecha límite para metas a largo plazo</p>
+</div>
+<button id="closeGoalsBtn" class="btn ghost">Volver</button>
+</div>
+<div class="section-toolbar">
+<div class="form-row module-search">
+<label for="goalsSearchInput">Buscar objetivos</label>
+<input id="goalsSearchInput" type="search" placeholder="Nombre o materia" />
+</div>
+</div>
+<div id="goalsContainer" class="tasks-grid"></div>
 </section>
 
 <div class="task-search-row">
@@ -347,6 +367,12 @@
 <select id="taskProject"></select>
 </div>
 <div class="form-row">
+<label class="settings-check">
+<input id="taskFlexible" type="checkbox" />
+Marcar como Objetivo Personal (Sin fecha límite)
+</label>
+</div>
+<div class="form-row" id="taskDateTimeRow">
 <label for="taskDateTime">Fecha y hora de entrega</label>
 <input id="taskDateTime" type="datetime-local" />
 </div>
